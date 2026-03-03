@@ -28,6 +28,9 @@ WHOAMI_URL      = "https://api.central.sophos.com/whoami/v1"
 PARTNER_API_URL = "https://api.central.sophos.com"
 SEV_ORDER       = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+# Delay between tenant API calls to avoid 429 rate limiting (seconds)
+TENANT_POLL_DELAY = 0.5
+
 
 def log(m): print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {m}", flush=True)
 
@@ -68,7 +71,10 @@ def get_whoami(token):
 
 
 # ---------------------------------------------------------------------------
-# Partner: list ALL managed tenants with full debug logging
+# Partner: list ALL managed tenants
+# The Sophos partner API returns {"current":1,"size":100,"maxSize":100} with
+# no "total" pages field. We detect more pages by checking if the returned
+# item count equals maxSize, then increment the page number.
 # ---------------------------------------------------------------------------
 def get_partner_tenants(token, partner_id):
     tenants  = []
@@ -87,53 +93,25 @@ def get_partner_tenants(token, partner_id):
                 timeout=30
             )
             r.raise_for_status()
-            d     = r.json()
-            items = d.get("items", [])
+            d        = r.json()
+            items    = d.get("items", [])
+            pages    = d.get("pages", {})
+            max_size = pages.get("maxSize", 100)
+
             tenants.extend(items)
-
-            # Full debug — log raw pages block so we can see exactly what Sophos returns
-            log(f"  Page {page_num}: got {len(items)} item(s). Raw pages block: {json.dumps(d.get('pages', {}))}")
-
-            pages     = d.get("pages", {})
-            current   = pages.get("current", page_num)
-            total_pgs = pages.get("total", 1)
-            next_key  = pages.get("nextKey") or pages.get("next") or pages.get("nextPageKey")
-
-            log(f"  current={current}, total={total_pgs}, nextKey={next_key}")
+            log(f"  Tenant page {page_num}: got {len(items)} item(s) "
+                f"(total so far: {len(tenants)}) — pages={json.dumps(pages)}")
 
             if not items:
-                log("  No items returned — stopping.")
+                log("  No items on this page — stopping.")
                 break
 
-            # Try nextKey cursor first, fall back to integer page increment
-            if next_key:
-                log(f"  Switching to cursor pagination: nextKey={next_key}")
-
-                while next_key:
-                    r2 = requests.get(
-                        f"{PARTNER_API_URL}/partner/v1/tenants",
-                        headers=hdrs,
-                        params={"pageSize": 100, "pageFromKey": next_key},
-                        timeout=30
-                    )
-                    r2.raise_for_status()
-                    d2     = r2.json()
-                    items2 = d2.get("items", [])
-                    tenants.extend(items2)
-                    log(f"  Cursor page: got {len(items2)} item(s). pages={json.dumps(d2.get('pages', {}))}")
-                    next_key = (d2.get("pages") or {}).get("nextKey") or \
-                               (d2.get("pages") or {}).get("next") or \
-                               (d2.get("pages") or {}).get("nextPageKey")
-                    if not items2:
-                        break
-                break  # cursor loop handled all remaining pages
-
-            elif current < total_pgs:
-                log(f"  Incrementing to page {page_num + 1} of {total_pgs}")
+            # If we got a full page, there may be more — fetch next page
+            if len(items) >= max_size:
+                log(f"  Full page received — fetching page {page_num + 1}...")
                 page_num += 1
-
             else:
-                log(f"  Reached last page ({current} of {total_pgs}) — stopping.")
+                log(f"  Partial page ({len(items)} < {max_size}) — this is the last page.")
                 break
 
         except Exception as e:
@@ -146,6 +124,7 @@ def get_partner_tenants(token, partner_id):
 
 # ---------------------------------------------------------------------------
 # Fetch security alerts for a single tenant (dashboard)
+# Retries once on 429
 # ---------------------------------------------------------------------------
 def fetch_alerts_for_tenant(token, tenant_id, tenant_url):
     alerts, page_key = [], None
@@ -161,6 +140,10 @@ def fetch_alerts_for_tenant(token, tenant_id, tenant_url):
             params["pageFromKey"] = page_key
         try:
             r = requests.get(url, headers=hdrs, params=params, timeout=30)
+            if r.status_code == 429:
+                log(f"  Rate limited on alerts for {tenant_id} — waiting 10s...")
+                time.sleep(10)
+                r = requests.get(url, headers=hdrs, params=params, timeout=30)
             r.raise_for_status()
             d = r.json()
             alerts.extend(d.get("items", []))
@@ -175,6 +158,7 @@ def fetch_alerts_for_tenant(token, tenant_id, tenant_url):
 
 # ---------------------------------------------------------------------------
 # Fetch all endpoints for a single tenant (new device detection)
+# Retries once on 429
 # ---------------------------------------------------------------------------
 def fetch_endpoints_for_tenant(token, tenant_id, tenant_url):
     endpoints, page_key = [], None
@@ -190,6 +174,10 @@ def fetch_endpoints_for_tenant(token, tenant_id, tenant_url):
             params["pageFromKey"] = page_key
         try:
             r = requests.get(url, headers=hdrs, params=params, timeout=30)
+            if r.status_code == 429:
+                log(f"  Rate limited on endpoints for {tenant_id} — waiting 10s...")
+                time.sleep(10)
+                r = requests.get(url, headers=hdrs, params=params, timeout=30)
             r.raise_for_status()
             d = r.json()
             endpoints.extend(d.get("items", []))
@@ -396,6 +384,9 @@ def harvest():
         for t in tenant_list:
             t_id, t_name, t_url = t["id"], t["name"], t["url"]
             log(f"  Polling: {t_name or t_id}")
+
+            # Small delay between tenants to avoid rate limiting
+            time.sleep(TENANT_POLL_DELAY)
 
             # Security alerts → dashboard
             raw_alerts = fetch_alerts_for_tenant(token, t_id, t_url)
