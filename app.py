@@ -68,7 +68,7 @@ def get_whoami(token):
 
 
 # ---------------------------------------------------------------------------
-# Partner: list ALL managed tenants (integer page-based pagination)
+# Partner: list ALL managed tenants with full debug logging
 # ---------------------------------------------------------------------------
 def get_partner_tenants(token, partner_id):
     tenants  = []
@@ -90,15 +90,51 @@ def get_partner_tenants(token, partner_id):
             d     = r.json()
             items = d.get("items", [])
             tenants.extend(items)
-            log(f"  Tenant page {page_num}: got {len(items)} tenant(s) (total so far: {len(tenants)})")
+
+            # Full debug — log raw pages block so we can see exactly what Sophos returns
+            log(f"  Page {page_num}: got {len(items)} item(s). Raw pages block: {json.dumps(d.get('pages', {}))}")
 
             pages     = d.get("pages", {})
             current   = pages.get("current", page_num)
             total_pgs = pages.get("total", 1)
+            next_key  = pages.get("nextKey") or pages.get("next") or pages.get("nextPageKey")
 
-            if current >= total_pgs or not items:
+            log(f"  current={current}, total={total_pgs}, nextKey={next_key}")
+
+            if not items:
+                log("  No items returned — stopping.")
                 break
-            page_num += 1
+
+            # Try nextKey cursor first, fall back to integer page increment
+            if next_key:
+                log(f"  Switching to cursor pagination: nextKey={next_key}")
+
+                while next_key:
+                    r2 = requests.get(
+                        f"{PARTNER_API_URL}/partner/v1/tenants",
+                        headers=hdrs,
+                        params={"pageSize": 100, "pageFromKey": next_key},
+                        timeout=30
+                    )
+                    r2.raise_for_status()
+                    d2     = r2.json()
+                    items2 = d2.get("items", [])
+                    tenants.extend(items2)
+                    log(f"  Cursor page: got {len(items2)} item(s). pages={json.dumps(d2.get('pages', {}))}")
+                    next_key = (d2.get("pages") or {}).get("nextKey") or \
+                               (d2.get("pages") or {}).get("next") or \
+                               (d2.get("pages") or {}).get("nextPageKey")
+                    if not items2:
+                        break
+                break  # cursor loop handled all remaining pages
+
+            elif current < total_pgs:
+                log(f"  Incrementing to page {page_num + 1} of {total_pgs}")
+                page_num += 1
+
+            else:
+                log(f"  Reached last page ({current} of {total_pgs}) — stopping.")
+                break
 
         except Exception as e:
             log(f"!! Error fetching tenant page {page_num}: {e}")
@@ -289,7 +325,6 @@ def send_new_device_email(new_devices):
 # Main harvest loop
 # ---------------------------------------------------------------------------
 def harvest():
-    # Load known endpoint IDs from disk
     known_ids = set()
     if os.path.exists(STATE_FILE):
         try:
@@ -323,7 +358,6 @@ def harvest():
         id_type = whoami.get("idType")
         log(f"  Account type: {id_type}")
 
-        # Build tenant list
         tenant_list = []
 
         if id_type == "partner":
