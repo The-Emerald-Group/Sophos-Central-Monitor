@@ -68,36 +68,48 @@ def get_whoami(token):
 
 
 # ---------------------------------------------------------------------------
-# Partner: list all managed tenants
+# Partner: list ALL managed tenants (integer page-based pagination)
 # ---------------------------------------------------------------------------
 def get_partner_tenants(token, partner_id):
-    tenants, page_key = [], None
+    tenants  = []
+    page_num = 1
     hdrs = {
         "Authorization": f"Bearer {token}",
         "X-Partner-ID":  partner_id,
         "Accept":        "application/json"
     }
     while True:
-        params = {"pageSize": 100}
-        if page_key:
-            params["pageFromKey"] = page_key
         try:
-            r = requests.get(f"{PARTNER_API_URL}/partner/v1/tenants",
-                             headers=hdrs, params=params, timeout=30)
+            r = requests.get(
+                f"{PARTNER_API_URL}/partner/v1/tenants",
+                headers=hdrs,
+                params={"pageSize": 100, "page": page_num},
+                timeout=30
+            )
             r.raise_for_status()
-            d = r.json()
-            tenants.extend(d.get("items", []))
-            page_key = d.get("pages", {}).get("nextKey")
-            if not page_key:
+            d     = r.json()
+            items = d.get("items", [])
+            tenants.extend(items)
+            log(f"  Tenant page {page_num}: got {len(items)} tenant(s) (total so far: {len(tenants)})")
+
+            pages     = d.get("pages", {})
+            current   = pages.get("current", page_num)
+            total_pgs = pages.get("total", 1)
+
+            if current >= total_pgs or not items:
                 break
+            page_num += 1
+
         except Exception as e:
-            log(f"!! Error listing tenants: {e}")
+            log(f"!! Error fetching tenant page {page_num}: {e}")
             break
+
+    log(f"  Total tenants fetched: {len(tenants)}")
     return tenants
 
 
 # ---------------------------------------------------------------------------
-# Fetch security alerts for a single tenant (for dashboard)
+# Fetch security alerts for a single tenant (dashboard)
 # ---------------------------------------------------------------------------
 def fetch_alerts_for_tenant(token, tenant_id, tenant_url):
     alerts, page_key = [], None
@@ -126,7 +138,7 @@ def fetch_alerts_for_tenant(token, tenant_id, tenant_url):
 
 
 # ---------------------------------------------------------------------------
-# Fetch all endpoints for a single tenant (for new device detection)
+# Fetch all endpoints for a single tenant (new device detection)
 # ---------------------------------------------------------------------------
 def fetch_endpoints_for_tenant(token, tenant_id, tenant_url):
     endpoints, page_key = [], None
@@ -155,7 +167,7 @@ def fetch_endpoints_for_tenant(token, tenant_id, tenant_url):
 
 
 # ---------------------------------------------------------------------------
-# Parse alert
+# Parse a raw Sophos alert into a clean dict
 # ---------------------------------------------------------------------------
 def parse_alert(a, tenant_name=""):
     sev = (a.get("severity") or "low").lower()
@@ -197,9 +209,9 @@ def send_new_device_email(new_devices):
         log("-- SMTP not configured, skipping email.")
         return False
 
-    count    = len(new_devices)
-    plural   = "s" if count > 1 else ""
-    subject  = f"New Sophos Endpoint{plural} Detected — {count} Machine{plural} Registered"
+    count  = len(new_devices)
+    plural = "s" if count > 1 else ""
+    subject = f"New Sophos Endpoint{plural} Detected — {count} Machine{plural} Registered"
 
     table_rows = ""
     for d in new_devices:
@@ -217,14 +229,15 @@ def send_new_device_email(new_devices):
       <body style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#f4f5f7;margin:0;padding:30px 10px;">
         <div style="max-width:700px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.05);">
           <div style="background:#0073CF;color:#fff;padding:20px;text-align:center;">
-            <h2 style="margin:0;font-size:22px;letter-spacing:1px;">NEW ENDPOINT{plural.upper()} DETECTED</h2>
+            <h2 style="margin:0;font-size:22px;letter-spacing:1px;">&#x1F4BB; NEW ENDPOINT{plural.upper()} DETECTED</h2>
           </div>
           <div style="padding:30px;">
             <p style="font-size:16px;color:#444;line-height:1.5;margin-top:0;">
-              The Sophos Central monitor has detected <b>{count} new endpoint{plural}</b> registered since the last harvest.
-              Please review these machines to confirm they are authorised.
+              The Sophos Central monitor has detected <b>{count} new endpoint{plural}</b> registered since
+              the last harvest. Please review these machines to confirm they are authorised.
             </p>
-            <table style="width:100%;border-collapse:collapse;margin-top:20px;margin-bottom:25px;background:#f9f9f9;border-radius:6px;overflow:hidden;text-align:left;">
+            <table style="width:100%;border-collapse:collapse;margin-top:20px;margin-bottom:25px;
+                          background:#f9f9f9;border-radius:6px;overflow:hidden;text-align:left;">
               <tr style="background:#eaeaea;">
                 <th style="padding:12px 15px;color:#444;font-size:14px;">Hostname</th>
                 <th style="padding:12px 15px;color:#444;font-size:14px;">OS</th>
@@ -234,7 +247,8 @@ def send_new_device_email(new_devices):
               </tr>
               {table_rows}
             </table>
-            <h3 style="color:#222;font-size:16px;margin-bottom:10px;border-bottom:2px solid #0073CF;display:inline-block;padding-bottom:5px;">Recommended Actions</h3>
+            <h3 style="color:#222;font-size:16px;margin-bottom:10px;border-bottom:2px solid #0073CF;
+                       display:inline-block;padding-bottom:5px;">Recommended Actions</h3>
             <ul style="color:#555;line-height:1.6;padding-left:20px;font-size:14px;">
               <li style="margin-bottom:6px;"><b>Verify ownership:</b> Confirm the device belongs to a known user or department.</li>
               <li style="margin-bottom:6px;"><b>Check group assignment:</b> Ensure the device is in the correct policy group.</li>
@@ -309,14 +323,13 @@ def harvest():
         id_type = whoami.get("idType")
         log(f"  Account type: {id_type}")
 
-        # Build tenant list — works for both partner and direct tenant credentials
+        # Build tenant list
         tenant_list = []
 
         if id_type == "partner":
             partner_id = whoami["id"]
             log(f"  Partner ID: {partner_id} — fetching managed tenants...")
             tenants = get_partner_tenants(token, partner_id)
-            log(f"  Found {len(tenants)} managed tenant(s).")
             for t in tenants:
                 t_url = t.get("apiHost") or t.get("dataRegion") or PARTNER_API_URL
                 if isinstance(t_url, dict):
@@ -341,14 +354,14 @@ def harvest():
             time.sleep(POLL_INTERVAL)
             continue
 
-        # ── Per-tenant: fetch alerts (dashboard) + endpoints (email) ─────────
-        all_alerts     = []
-        new_devices    = []
-        current_ids    = set()
+        # ── Per-tenant: fetch alerts + endpoints ─────────────────────────────
+        all_alerts  = []
+        new_devices = []
+        current_ids = set()
 
         for t in tenant_list:
             t_id, t_name, t_url = t["id"], t["name"], t["url"]
-            log(f"  Polling tenant: {t_name or t_id}")
+            log(f"  Polling: {t_name or t_id}")
 
             # Security alerts → dashboard
             raw_alerts = fetch_alerts_for_tenant(token, t_id, t_url)
@@ -368,14 +381,16 @@ def harvest():
                 if ep_id not in known_ids and not first_run:
                     hostname = ep.get("hostname") or ep.get("name") or "Unknown"
                     os_info  = ep.get("os", {})
-                    os_name  = f"{os_info.get('name','')} {os_info.get('majorVersion','')}".strip() or "Unknown OS"
+                    os_name  = f"{os_info.get('name', '')} {os_info.get('majorVersion', '')}".strip() or "Unknown OS"
                     group    = (ep.get("group") or {}).get("name", "Ungrouped")
 
                     reg_raw  = ep.get("assignedAt") or ep.get("registeredAt") or ""
                     reg_disp = ""
                     if reg_raw:
                         try:
-                            reg_disp = datetime.fromisoformat(reg_raw.replace("Z", "+00:00")).strftime("%d %b %Y %H:%M")
+                            reg_disp = datetime.fromisoformat(
+                                reg_raw.replace("Z", "+00:00")
+                            ).strftime("%d %b %Y %H:%M")
                         except Exception:
                             reg_disp = reg_raw[:16]
 
@@ -387,20 +402,22 @@ def harvest():
                         "registered": reg_disp
                     })
 
-        # ── Send new device email ─────────────────────────────────────────────
+        # ── New device email ──────────────────────────────────────────────────
         if first_run:
             log(f"First run — seeding {len(current_ids)} known endpoints. No email sent.")
             first_run = False
         elif new_devices:
             log(f">>> {len(new_devices)} new device(s) found — sending email...")
             send_new_device_email(new_devices)
+        else:
+            log("  No new devices detected.")
 
         # Persist known endpoint IDs
         known_ids = current_ids
         with open(STATE_FILE, "w") as f:
             json.dump(list(known_ids), f)
 
-        # ── Sort alerts and write dashboard data ──────────────────────────────
+        # ── Sort alerts and write dashboard ───────────────────────────────────
         all_alerts.sort(key=lambda x: (SEV_ORDER.get(x["severity"], 9), -x["raised_ts"]))
 
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -416,7 +433,8 @@ def harvest():
             "error":          None
         })
 
-        log(f"*** Done — {len(all_alerts)} alert(s), {len(new_devices)} new device(s), {len(tenant_list)} tenant(s). {counts}")
+        log(f"*** Done — {len(all_alerts)} alert(s), {len(new_devices)} new device(s), "
+            f"{len(tenant_list)} tenant(s). {counts}")
         time.sleep(POLL_INTERVAL)
 
 
