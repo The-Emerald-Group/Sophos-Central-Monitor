@@ -1,24 +1,22 @@
 services:
   sophos-monitor:
-    image: samuelstreets/sophos-central-monitor:latest
+    build: .
     container_name: sophos-monitor
     ports:
       - "8083:8080"
     volumes:
       - sophos_data:/sophos_data
     environment:
-      # --- Sophos Central API Credentials ---
-      # Generate at: Sophos Central > Global Settings > API Credentials Management
-      # Set role to: Service Principal ReadOnly
       - SOPHOS_CLIENT_ID=YOUR_CLIENT_ID_HERE
       - SOPHOS_CLIENT_SECRET=YOUR_CLIENT_SECRET_HERE
-
-      # --- Poll interval in seconds (default: 300 = 5 minutes) ---
+      - SMTP_SERVER=your.smtp.server.ip
+      - SMTP_PORT=25
+      - SMTP_USER=your_smtp_user
+      - SMTP_PASS=your_smtp_password
+      - EMAIL_FROM=alerts@yourdomain.com
+      - EMAIL_TO=reports@yourdomain.com
       - POLL_INTERVAL=300
-
-      # --- Python Environment ---
       - PYTHONUNBUFFERED=1
-
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/data.json')"]
       interval: 60s
