@@ -1,0 +1,31 @@
+services:
+  sophos-monitor:
+    image: samuelstreets/sophos-central-monitor:latest
+    container_name: sophos-monitor
+    ports:
+      - "8083:8080"
+    volumes:
+      - sophos_data:/sophos_data
+    environment:
+      # --- Sophos Central API Credentials ---
+      # Generate at: Sophos Central > Global Settings > API Credentials Management
+      # Set role to: Service Principal ReadOnly
+      - SOPHOS_CLIENT_ID=YOUR_CLIENT_ID_HERE
+      - SOPHOS_CLIENT_SECRET=YOUR_CLIENT_SECRET_HERE
+
+      # --- Poll interval in seconds (default: 300 = 5 minutes) ---
+      - POLL_INTERVAL=300
+
+      # --- Python Environment ---
+      - PYTHONUNBUFFERED=1
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/data.json')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: always
+
+volumes:
+  sophos_data:
