@@ -47,3 +47,34 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Delete old images from Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPO: samuelstreets/sophos-central-monitor
+        run: |
+          # Authenticate and get a JWT token
+          TOKEN=$(curl -s -X POST "https://hub.docker.com/v2/users/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"${DOCKERHUB_USERNAME}\", \"password\": \"${DOCKERHUB_TOKEN}\"}" \
+            | jq -r '.token')
+
+          # Fetch all tags
+          TAGS=$(curl -s "https://hub.docker.com/v2/repositories/${REPO}/tags?page_size=100" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            | jq -r '.results[].name')
+
+          echo "All tags found:"
+          echo "$TAGS"
+
+          # Delete every tag except 'latest'
+          for TAG in $TAGS; do
+            if [ "$TAG" != "latest" ]; then
+              echo "Deleting tag: $TAG"
+              curl -s -X DELETE "https://hub.docker.com/v2/repositories/${REPO}/tags/${TAG}/" \
+                -H "Authorization: Bearer ${TOKEN}"
+            else
+              echo "Keeping tag: $TAG"
+            fi
+          done
