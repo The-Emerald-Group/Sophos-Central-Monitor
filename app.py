@@ -266,7 +266,6 @@ def send_new_device_email(new_devices):
           <td style="padding:10px 15px;border-bottom:1px solid #eaeaea;font-weight:bold;color:#222;">{d['hostname']}</td>
           <td style="padding:10px 15px;border-bottom:1px solid #eaeaea;color:#666;">{d['os']}</td>
           <td style="padding:10px 15px;border-bottom:1px solid #eaeaea;color:#666;">{d['tenant']}</td>
-          <td style="padding:10px 15px;border-bottom:1px solid #eaeaea;color:#666;">{d['group']}</td>
           <td style="padding:10px 15px;border-bottom:1px solid #eaeaea;color:#00A1E4;">{d['registered']}</td>
         </tr>"""
 
@@ -289,7 +288,6 @@ def send_new_device_email(new_devices):
                 <th style="padding:12px 15px;color:#444;font-size:14px;">Hostname</th>
                 <th style="padding:12px 15px;color:#444;font-size:14px;">OS</th>
                 <th style="padding:12px 15px;color:#444;font-size:14px;">Tenant</th>
-                <th style="padding:12px 15px;color:#444;font-size:14px;">Group</th>
                 <th style="padding:12px 15px;color:#444;font-size:14px;">Registered</th>
               </tr>
               {table_rows}
@@ -297,10 +295,8 @@ def send_new_device_email(new_devices):
             <h3 style="color:#222;font-size:16px;margin-bottom:10px;border-bottom:2px solid #0073CF;
                        display:inline-block;padding-bottom:5px;">Recommended Actions</h3>
             <ul style="color:#555;line-height:1.6;padding-left:20px;font-size:14px;">
-              <li style="margin-bottom:6px;"><b>Verify ownership:</b> Confirm the device belongs to a known user or department.</li>
-              <li style="margin-bottom:6px;"><b>Check group assignment:</b> Ensure the device is in the correct policy group.</li>
-              <li style="margin-bottom:6px;"><b>Review in Sophos Central:</b> Confirm tamper protection and policies are applied.</li>
-              <li style="margin-bottom:6px;"><b>Investigate unknowns:</b> Unrecognised devices should be isolated immediately.</li>
+              <li style="margin-bottom:6px;"><b>Verify billing:</b> Confirm the old device has been deleted if applicable.</li>
+              <li style="margin-bottom:6px;"><b>Update billing:</b> Confirm additional maintance has been added if applicable.</li>
             </ul>
           </div>
           <div style="background:#f1f1f1;padding:15px;text-align:center;color:#888;font-size:12px;border-top:1px solid #eaeaea;">
