@@ -349,10 +349,11 @@ def eod_scheduler():
             if devices_snapshot:
                 log(f"EOD trigger: sending summary for {len(devices_snapshot)} device(s) registered today...")
                 success = send_new_device_email(devices_snapshot)
-                if success:
-                    with _eod_lock:
-                        _eod_sent_date  = today
-                        _todays_devices = []   # clear for tomorrow
+                if not success:
+                    log(f"!! EOD email send FAILED — clearing {len(devices_snapshot)} devices anyway to prevent duplicates tomorrow")
+                with _eod_lock:
+                    _eod_sent_date  = today
+                    _todays_devices = []   # clear for tomorrow (whether email succeeded or failed)
             else:
                 log("EOD trigger: no new devices registered today — no email sent.")
                 with _eod_lock:
